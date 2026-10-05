@@ -1,0 +1,70 @@
+# Copia este archivo en tu repositorio de GitHub en la ruta:
+#   .github/workflows/cazaofertas.yml
+name: Cazaofertas
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"     # cada 15 minutos
+    - cron: "0 12 1 * *"       # mensual: mantener activo
+  workflow_dispatch:            # botón "Run workflow" para probar a mano
+
+concurrency:
+  group: cazaofertas
+  cancel-in-progress: false
+
+jobs:
+  buscar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 14
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Recuperar historial de precios
+        uses: actions/cache/restore@v4
+        with:
+          path: precios.db
+          key: precios-${{ github.run_id }}
+          restore-keys: precios-
+
+      - name: Instalar
+        run: |
+          pip install playwright requests
+          python -m playwright install --with-deps chromium
+          sudo apt-get install -y xvfb > /dev/null
+
+      - name: Buscar ofertas
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TERMINOS: ${{ vars.TERMINOS }}
+          SOLO_CON: ${{ vars.SOLO_CON }}
+          MODO_NUBE: "1"
+          HEADLESS: "0"
+          MAX_SEGUNDOS: "540"
+        run: xvfb-run -a python cazaofertas.py --once
+
+      - name: Guardar historial de precios
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: precios.db
+          key: precios-${{ github.run_id }}
+
+  # Una vez al mes deja un registro para que GitHub no pause el horario por inactividad
+  mantener-activo:
+    if: github.event.schedule == '0 12 1 * *'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          date -u > .ultimo-latido
+          git config user.name "cazaofertas-bot"
+          git config user.email "cazaofertas-bot@users.noreply.github.com"
+          git add .ultimo-latido
+          git commit -m "mantener activo" && git push
